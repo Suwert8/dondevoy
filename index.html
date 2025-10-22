@@ -1404,7 +1404,7 @@
                     await new Promise(r => setTimeout(r, Math.random() * 200));
 
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 3000);
+                    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
                     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
                     
@@ -1418,16 +1418,18 @@
                     clearTimeout(timeoutId);
                     
                     if (!resp.ok) {
-                        // Si falla la petición, asumir que NO está en tierra para ser conservadores
-                        sampleLandCache.set(key, false);
-                        resolve(false);
+                        // Si falla la petición, asumir que SÍ está en tierra (más permisivo)
+                        console.debug('Nominatim no respondió, asumiendo tierra');
+                        sampleLandCache.set(key, true);
+                        resolve(true);
                         return;
                     }
 
                     const data = await resp.json();
                     
-                    // Verificar si es error de Nominatim (punto en el mar)
+                    // Si hay error de Nominatim, verificar el tipo
                     if (data.error) {
+                        // Si el error indica que no encontró nada, probablemente es mar
                         sampleLandCache.set(key, false);
                         resolve(false);
                         return;
@@ -1435,32 +1437,31 @@
                     
                     const addr = data.address || {};
                     
-                    // Verificar que NO sea solo océano/mar
-                    const isOcean = (data.type === 'sea' || data.type === 'ocean' || 
-                                   data.class === 'natural' && (data.type === 'water' || data.type === 'bay'));
-                    
-                    // Debe tener al menos alguna información de dirección terrestre
-                    const hasLandInfo = Boolean(
-                        addr.country || addr.state || addr.city || 
-                        addr.town || addr.village || addr.hamlet || 
-                        addr.county || addr.suburb || addr.road ||
-                        addr.postcode
+                    // Rechazar solo si es explícitamente mar/océano
+                    const isExplicitlyWater = (
+                        data.type === 'sea' || 
+                        data.type === 'ocean' || 
+                        (data.class === 'natural' && data.type === 'water' && !addr.country) ||
+                        (data.class === 'place' && data.type === 'sea')
                     );
                     
-                    const onLand = !isOcean && hasLandInfo;
+                    // Si tiene país, asumir que está en tierra
+                    const hasCountry = Boolean(addr.country);
+                    
+                    const onLand = !isExplicitlyWater || hasCountry;
                     
                     sampleLandCache.set(key, onLand);
                     resolve(onLand);
                 } catch (err) {
                     const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
                     if (err.name === 'AbortError') {
-                        console.debug('Timeout verificando punto:', lat.toFixed(4), lon.toFixed(4));
+                        console.debug('Timeout verificando punto, asumiendo tierra');
                     } else {
-                        console.debug('Error verificando punto:', err.message);
+                        console.debug('Error verificando punto, asumiendo tierra:', err.message);
                     }
-                    // En caso de timeout o error, asumir que NO está en tierra
-                    sampleLandCache.set(key, false);
-                    resolve(false);
+                    // En caso de timeout o error, asumir que SÍ está en tierra
+                    sampleLandCache.set(key, true);
+                    resolve(true);
                 }
             });
         }
