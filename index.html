@@ -482,71 +482,6 @@
 
         <div id="error" class="error" style="display: none;"></div>
 
-    <div id="map" style="height: 350px; border-radius: 10px; margin-bottom: 15px; overflow: hidden;"></div>
-
-        #controls {
-            margin-bottom: 12px;
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            align-items: center;
-            font-size: 14px;
-        }
-
-        #controls label {
-            color: white;
-            font-size: 13px;
-        }
-
-        #controls select,
-        #controls input[type="number"] {
-            padding: 6px;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-            font-size: 14px;
-            -webkit-appearance: none;
-            appearance: none;
-        }
-
-        #controls input[type="number"] {
-            width: 70px;
-        }
-
-        @media (max-width: 480px) {
-            #controls {
-                font-size: 13px;
-            }
-            
-            #controls label {
-                font-size: 12px;
-            }
-            
-            #controls input[type="number"] {
-                width: 60px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>¿Dónde Voy?</h1>
-            <p>Encuentra los mejores lugares con buen tiempo cerca de ti</p>
-        </header>
-
-        <div class="search-box">
-            <input type="text" id="location" placeholder="Ingresa tu ubicación..." autocomplete="off">
-            <button onclick="searchWeather()" class="search-btn">Buscar</button>
-            <button onclick="useCurrentLocation()" class="location-btn" title="Usar mi ubicación actual">📍</button>
-        </div>
-
-        <div class="loading" id="loading" style="display: none;">
-            <div class="loading-text">Buscando lugares con buen tiempo...</div>
-            <div class="loading-location" style="display: none">Obteniendo tu ubicación...</div>
-        </div>
-
-        <div id="error" class="error" style="display: none;"></div>
-
         <div id="map" style="height: 300px; border-radius: 10px; margin-bottom: 15px; overflow: hidden;"></div>
 
         <!-- Controles de orden y filtros -->
@@ -560,9 +495,6 @@
             <option value="temp_asc">Temperatura (baja primero)</option>
             <option value="temp_desc">Temperatura (alta primero)</option>
         </select>
-
-        <label>Máx. distancia (km):</label>
-        <input id="filterDistance" type="number" min="0" value="300" onchange="applyFiltersAndSort()">
 
         <label>Máx. viento (km/h):</label>
         <input id="filterWind" type="number" min="0" value="999" onchange="applyFiltersAndSort()">
@@ -646,7 +578,7 @@
             IDEAL_TEMP_MAX: 28,
             MAX_WIND_SPEED: 20,
             MAX_DISTANCE: 300, // Aumentado a 300 km
-            API_KEY: '' // Se configurará desde el panel de configuración
+            API_KEY: '6e413e1155e03d549eae814b263c5055' // API key por defecto
         };
 
         // Cargar configuración guardada
@@ -654,8 +586,8 @@
             const savedSettings = localStorage.getItem('weatherAppSettings');
             if (savedSettings) {
                 const settings = JSON.parse(savedSettings);
-                CONFIG.API_KEY = settings.apiKey || '';
-                CONFIG.MAX_DISTANCE = settings.maxDistance || 100;
+                CONFIG.API_KEY = settings.apiKey || '6e413e1155e03d549eae814b263c5055';
+                CONFIG.MAX_DISTANCE = settings.maxDistance || 300;
                 CONFIG.IDEAL_TEMP_MIN = settings.minTemp || 20;
                 CONFIG.IDEAL_TEMP_MAX = settings.maxTemp || 28;
                 CONFIG.MAX_WIND_SPEED = settings.maxWind || 20;
@@ -669,14 +601,18 @@
                 // muestreo
                 document.getElementById('sample-rings').value = settings.sampleRings || 3;
                 document.getElementById('sample-per-ring').value = settings.samplePerRing || 12;
-                document.getElementById('sample-count').value = settings.sampleCount || 30;
-                document.getElementById('sampling-concurrency').value = settings.samplingConcurrency || 6;
-                // Controles de filtros
-                document.getElementById('filterDistance').value = CONFIG.MAX_DISTANCE;
+                document.getElementById('sample-count').value = settings.sampleCount || 50;
+                document.getElementById('sampling-concurrency').value = settings.samplingConcurrency || 8;
+                // Controles de filtros (NO incluir filterDistance aquí)
                 document.getElementById('filterWind').value = '';
                 document.getElementById('filterRain').value = 100;
                 const disp = document.getElementById('sampleRadiusDisplay');
                 if (disp) disp.textContent = String(CONFIG.MAX_DISTANCE);
+            } else {
+                // Valores por defecto si no hay configuración guardada
+                document.getElementById('api-key').value = CONFIG.API_KEY;
+                document.getElementById('sample-count').value = 50;
+                document.getElementById('sampling-concurrency').value = 8;
             }
             window.allResults = null;
         }
@@ -903,6 +839,57 @@
         // Cache para resultados del tiempo
         const weatherCache = new Map();
 
+        // Caché para nombres de lugares
+        const locationNameCache = new Map();
+
+        // Obtener nombre del lugar desde coordenadas
+        async function getLocationName(lat, lon) {
+            const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+            if (locationNameCache.has(key)) {
+                return locationNameCache.get(key);
+            }
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`,
+                    {
+                        signal: controller.signal,
+                        headers: {
+                            'User-Agent': 'DondeVoy Weather App - Educational Project'
+                        }
+                    }
+                );
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                }
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                }
+
+                // Extraer el mejor nombre disponible
+                const addr = data.address || {};
+                let name = addr.city || addr.town || addr.village || addr.hamlet || 
+                          addr.municipality || addr.county || addr.state || 
+                          data.display_name?.split(',')[0] || 
+                          `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+
+                locationNameCache.set(key, name);
+                return name;
+            } catch (err) {
+                console.debug('Error obteniendo nombre de ubicación:', err);
+                return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+            }
+        }
+
         async function searchWeather() {
             if (!CONFIG.API_KEY) {
                 showError('Por favor, configura tu API key de OpenWeather primero');
@@ -937,12 +924,12 @@
                 };
 
                 // 3. Generar puntos equidistantes
-                const target = Number(document.getElementById('sample-count')?.value) || 30;
+                const target = Number(document.getElementById('sample-count')?.value) || 50;
                 const points = generateEquidistantPointsForTarget(coords.lat, coords.lon, CONFIG.MAX_DISTANCE, target);
                 
                 // 4. Obtener clima para los puntos en paralelo
                 const results = [mainLocation]; // Empezar con la ubicación principal
-                const concurrency = Number(document.getElementById('sampling-concurrency')?.value) || 6;
+                const concurrency = Number(document.getElementById('sampling-concurrency')?.value) || 8;
                 
                 const fetchTasks = points.map(p => async () => {
                     try {
@@ -950,8 +937,10 @@
                         if (!onLand) return null;
 
                         const weather = await fetchWeatherAt(p.lat, p.lon);
+                        const placeName = await getLocationName(p.lat, p.lon);
+                        
                         return {
-                            name: `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`,
+                            name: placeName,
                             lat: p.lat,
                             lon: p.lon,
                             distance: calculateDistance(coords.lat, coords.lon, p.lat, p.lon),
@@ -1194,7 +1183,7 @@
             currentPage = 1;
 
             const sortBy = document.getElementById('sortBy').value;
-            const maxDistance = Number(document.getElementById('filterDistance').value) || CONFIG.MAX_DISTANCE;
+            const maxDistance = CONFIG.MAX_DISTANCE; // Usar la distancia de configuración
             const maxWind = Number(document.getElementById('filterWind').value) || 999;
             const maxRain = Number(document.getElementById('filterRain').value) || 100;
 
@@ -1224,7 +1213,6 @@
 
         function resetFilters() {
             document.getElementById('sortBy').value = 'score_desc';
-            document.getElementById('filterDistance').value = CONFIG.MAX_DISTANCE;
             document.getElementById('filterWind').value = '';
             document.getElementById('filterRain').value = 100;
             currentPage = 1; // Resetear página al limpiar filtros
@@ -1406,22 +1394,21 @@
             return new Promise(async (resolve) => {
                 try {
                     // Key con precisión reducida para agrupar puntos cercanos
-                    const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+                    const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
                     if (sampleLandCache.has(key)) {
                         resolve(sampleLandCache.get(key));
                         return;
                     }
 
                     // Añadir un pequeño delay aleatorio para evitar sobrecarga
-                    await new Promise(r => setTimeout(r, Math.random() * 300));
+                    await new Promise(r => setTimeout(r, Math.random() * 200));
 
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 segundos timeout
+                    const timeoutId = setTimeout(() => controller.abort(), 3000);
 
                     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
-                    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(nominatimUrl)}`;
                     
-                    const resp = await fetch(proxyUrl, {
+                    const resp = await fetch(nominatimUrl, {
                         signal: controller.signal,
                         headers: {
                             'User-Agent': 'DondeVoy Weather App - Educational Project'
@@ -1431,31 +1418,49 @@
                     clearTimeout(timeoutId);
                     
                     if (!resp.ok) {
-                        console.debug('Nominatim reverse failed:', resp.status);
-                        sampleLandCache.set(key, true);
-                        resolve(true);
+                        // Si falla la petición, asumir que NO está en tierra para ser conservadores
+                        sampleLandCache.set(key, false);
+                        resolve(false);
                         return;
                     }
 
                     const data = await resp.json();
+                    
+                    // Verificar si es error de Nominatim (punto en el mar)
+                    if (data.error) {
+                        sampleLandCache.set(key, false);
+                        resolve(false);
+                        return;
+                    }
+                    
                     const addr = data.address || {};
-                    const onLand = Boolean(
+                    
+                    // Verificar que NO sea solo océano/mar
+                    const isOcean = (data.type === 'sea' || data.type === 'ocean' || 
+                                   data.class === 'natural' && (data.type === 'water' || data.type === 'bay'));
+                    
+                    // Debe tener al menos alguna información de dirección terrestre
+                    const hasLandInfo = Boolean(
                         addr.country || addr.state || addr.city || 
                         addr.town || addr.village || addr.hamlet || 
-                        addr.county || addr.suburb || addr.road
+                        addr.county || addr.suburb || addr.road ||
+                        addr.postcode
                     );
+                    
+                    const onLand = !isOcean && hasLandInfo;
                     
                     sampleLandCache.set(key, onLand);
                     resolve(onLand);
                 } catch (err) {
-                    const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+                    const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
                     if (err.name === 'AbortError') {
                         console.debug('Timeout verificando punto:', lat.toFixed(4), lon.toFixed(4));
                     } else {
                         console.debug('Error verificando punto:', err.message);
                     }
-                    sampleLandCache.set(key, true);
-                    resolve(true); // En caso de error, asumimos tierra para no bloquear
+                    // En caso de timeout o error, asumir que NO está en tierra
+                    sampleLandCache.set(key, false);
+                    resolve(false);
                 }
             });
         }
