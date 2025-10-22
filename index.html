@@ -485,31 +485,37 @@
         <div id="map" style="height: 300px; border-radius: 10px; margin-bottom: 15px; overflow: hidden;"></div>
 
         <!-- Controles de orden y filtros -->
-        <div id="controls">
-            <label>Ordenar:</label>
-            <select id="sortBy" onchange="applyFiltersAndSort()">
-            <option value="score_desc">Puntuación (mejor primero)</option>
-            <option value="score_asc">Puntuación (peor primero)</option>
-            <option value="distance_asc">Distancia (cerca primero)</option>
-            <option value="distance_desc">Distancia (lejos primero)</option>
-            <option value="temp_asc">Temperatura (baja primero)</option>
-            <option value="temp_desc">Temperatura (alta primero)</option>
-        </select>
+        <div id="controls" style="background: rgba(255,255,255,0.95); padding: 15px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+            <div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">
+                <div style="flex: 1; min-width: 200px;">
+                    <label style="display: block; font-size: 13px; color: #666; margin-bottom: 5px;">📊 Ordenar por</label>
+                    <select id="sortBy" onchange="applyFiltersAndSort()" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px;">
+                        <option value="score_desc">⭐ Mejor puntuación</option>
+                        <option value="score_asc">Peor puntuación</option>
+                        <option value="distance_asc">📍 Más cerca</option>
+                        <option value="distance_desc">Más lejos</option>
+                        <option value="temp_asc">🌡️ Más frío</option>
+                        <option value="temp_desc">Más cálido</option>
+                    </select>
+                </div>
+                
+                <div style="min-width: 120px;">
+                    <label style="display: block; font-size: 13px; color: #666; margin-bottom: 5px;">💨 Máx. viento</label>
+                    <input id="filterWind" type="number" min="0" value="999" onchange="applyFiltersAndSort()" 
+                           style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px;" placeholder="km/h">
+                </div>
 
-        <label>Máx. viento (km/h):</label>
-        <input id="filterWind" type="number" min="0" value="999" onchange="applyFiltersAndSort()">
+                <div style="min-width: 120px;">
+                    <label style="display: block; font-size: 13px; color: #666; margin-bottom: 5px;">🌧️ Máx. lluvia</label>
+                    <input id="filterRain" type="number" min="0" max="100" value="100" onchange="applyFiltersAndSort()" 
+                           style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px;" placeholder="%">
+                </div>
 
-        <label>Máx. lluvia (%):</label>
-        <input id="filterRain" type="number" min="0" max="100" value="100" onchange="applyFiltersAndSort()">
-
-        <button onclick="resetFilters()">Reset</button>
-    </div>
-
-    <!-- Muestreo equidistante (parámetros en Ajustes) -->
-    <div id="samplingControls" style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; color:white;">
-        <div style="opacity:0.95;">Parámetros de muestreo en <b>Ajustes</b> (Radio, Anillos, Puntos/anillo, Cantidad, Concurrencia).</div>
-        <div id="samplingStatus" style="color:white; margin-left:8px;"></div>
-    </div>
+                <div style="align-self: flex-end;">
+                    <button onclick="resetFilters()" style="padding: 8px 16px; border: none; border-radius: 5px; background: #e74c3c; color: white; font-size: 14px; cursor: pointer; white-space: nowrap;">🔄 Reset</button>
+                </div>
+            </div>
+        </div>
 
     <div id="results" class="results"></div>
     </div>
@@ -844,17 +850,20 @@
 
         // Obtener nombre del lugar desde coordenadas
         async function getLocationName(lat, lon) {
-            const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+            const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
             if (locationNameCache.has(key)) {
                 return locationNameCache.get(key);
             }
 
+            // Delay pequeño para no saturar Nominatim
+            await new Promise(r => setTimeout(r, Math.random() * 100));
+
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3000);
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
 
                 const response = await fetch(
-                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`,
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`,
                     {
                         signal: controller.signal,
                         headers: {
@@ -866,27 +875,51 @@
                 clearTimeout(timeoutId);
 
                 if (!response.ok) {
-                    return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                    const fallback = `Ubicación ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                    locationNameCache.set(key, fallback);
+                    return fallback;
                 }
 
                 const data = await response.json();
                 
                 if (data.error) {
-                    return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                    const fallback = `Ubicación ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                    locationNameCache.set(key, fallback);
+                    return fallback;
                 }
 
                 // Extraer el mejor nombre disponible
                 const addr = data.address || {};
-                let name = addr.city || addr.town || addr.village || addr.hamlet || 
-                          addr.municipality || addr.county || addr.state || 
-                          data.display_name?.split(',')[0] || 
-                          `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                let name = addr.city || 
+                          addr.town || 
+                          addr.village || 
+                          addr.hamlet || 
+                          addr.municipality || 
+                          addr.suburb ||
+                          addr.neighbourhood ||
+                          addr.county || 
+                          addr.state_district ||
+                          addr.state;
+                
+                // Si no hay nombre específico, usar el display_name simplificado
+                if (!name && data.display_name) {
+                    const parts = data.display_name.split(',');
+                    name = parts[0]?.trim() || `Ubicación ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                }
+                
+                if (!name) {
+                    name = `Ubicación ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                }
 
                 locationNameCache.set(key, name);
                 return name;
             } catch (err) {
-                console.debug('Error obteniendo nombre de ubicación:', err);
-                return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                if (err.name !== 'AbortError') {
+                    console.debug('Error obteniendo nombre de ubicación:', err);
+                }
+                const fallback = `Ubicación ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                locationNameCache.set(key, fallback);
+                return fallback;
             }
         }
 
@@ -923,21 +956,28 @@
                     score: calculateWeatherScore(mainLocationWeather)
                 };
 
-                // 3. Generar puntos equidistantes
+                // 3. Generar puntos equidistantes cubriendo todo el círculo y filtrar mar (latitud > 43.5) ANTES de hacer llamadas
                 const target = Number(document.getElementById('sample-count')?.value) || 50;
-                const points = generateEquidistantPointsForTarget(coords.lat, coords.lon, CONFIG.MAX_DISTANCE, target);
                 
-                // 4. Obtener clima para los puntos en paralelo
+                // Generar más puntos para compensar los que se filtrarán
+                const allPoints = generateEquidistantPointsForTarget(coords.lat, coords.lon, CONFIG.MAX_DISTANCE, target * 3);
+                
+                // Filtrar puntos en el mar ANTES de hacer llamadas a la API (optimización)
+                const landPoints = allPoints.filter(p => p.lat <= 43.5).slice(0, target);
+                
+                console.log(`Puntos generados: ${allPoints.length}, En tierra (lat<=43.5): ${landPoints.length}`);
+                
+                // 4. Obtener clima y nombres para los puntos en paralelo
                 const results = [mainLocation]; // Empezar con la ubicación principal
                 const concurrency = Number(document.getElementById('sampling-concurrency')?.value) || 8;
                 
-                const fetchTasks = points.map(p => async () => {
+                const fetchTasks = landPoints.map(p => async () => {
                     try {
-                        const onLand = await isPointOnLand(p.lat, p.lon);
-                        if (!onLand) return null;
-
-                        const weather = await fetchWeatherAt(p.lat, p.lon);
-                        const placeName = await getLocationName(p.lat, p.lon);
+                        // Obtener clima y nombre del lugar en paralelo
+                        const [weather, placeName] = await Promise.all([
+                            fetchWeatherAt(p.lat, p.lon),
+                            getLocationName(p.lat, p.lon)
+                        ]);
                         
                         return {
                             name: placeName,
@@ -1240,25 +1280,37 @@
             markersLayer.clearLayers();
             markerById.clear();
 
-            // Determinar centro: preferir resultados, sino usar lastSearchCoords
+            // Determinar centro: siempre usar la ubicación buscada
             let center;
-            if (results && results.length > 0) {
-                center = [results[0].lat || 0, results[0].lon || 0];
-            } else if (window.lastSearchCoords) {
+            if (window.lastSearchCoords) {
                 center = [window.lastSearchCoords.lat, window.lastSearchCoords.lon];
+            } else if (results && results.length > 0) {
+                center = [results[0].lat || 0, results[0].lon || 0];
             } else {
                 center = [0,0];
             }
 
             map.setView(center, (center[0] === 0 && center[1] === 0) ? 2 : 8);
 
-            // Dibujar círculo de búsqueda (MAX_DISTANCE en metros)
+            // Dibujar círculo de búsqueda centrado en TU UBICACIÓN
             if (searchCircle) {
                 map.removeLayer(searchCircle);
             }
             const radiusMeters = CONFIG.MAX_DISTANCE * 1000;
-            searchCircle = L.circle(center, { radius: radiusMeters, color: '#3388ff', fillOpacity: 0.05 });
+            searchCircle = L.circle(center, { radius: radiusMeters, color: '#3388ff', fillOpacity: 0.05, weight: 2 });
             searchCircle.addTo(map);
+            
+            // Añadir marcador especial en el centro (tu ubicación)
+            const centerMarker = L.marker(center, {
+                icon: L.divIcon({
+                    className: 'center-marker',
+                    html: '<div style="background: #e74c3c; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>',
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                })
+            });
+            centerMarker.addTo(markersLayer);
+            centerMarker.bindPopup(`<b>📍 Tu ubicación</b><br>${results[0]?.name || 'Centro de búsqueda'}`);
 
             // Añadir marcadores
             results.forEach(r => {
@@ -1391,79 +1443,13 @@
         }
 
         async function isPointOnLand(lat, lon) {
-            return new Promise(async (resolve) => {
-                try {
-                    // Key con precisión reducida para agrupar puntos cercanos
-                    const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
-                    if (sampleLandCache.has(key)) {
-                        resolve(sampleLandCache.get(key));
-                        return;
-                    }
-
-                    // Añadir un pequeño delay aleatorio para evitar sobrecarga
-                    await new Promise(r => setTimeout(r, Math.random() * 200));
-
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-                    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
-                    
-                    const resp = await fetch(nominatimUrl, {
-                        signal: controller.signal,
-                        headers: {
-                            'User-Agent': 'DondeVoy Weather App - Educational Project'
-                        }
-                    });
-                    
-                    clearTimeout(timeoutId);
-                    
-                    if (!resp.ok) {
-                        // Si falla la petición, asumir que SÍ está en tierra (más permisivo)
-                        console.debug('Nominatim no respondió, asumiendo tierra');
-                        sampleLandCache.set(key, true);
-                        resolve(true);
-                        return;
-                    }
-
-                    const data = await resp.json();
-                    
-                    // Si hay error de Nominatim, verificar el tipo
-                    if (data.error) {
-                        // Si el error indica que no encontró nada, probablemente es mar
-                        sampleLandCache.set(key, false);
-                        resolve(false);
-                        return;
-                    }
-                    
-                    const addr = data.address || {};
-                    
-                    // Rechazar solo si es explícitamente mar/océano
-                    const isExplicitlyWater = (
-                        data.type === 'sea' || 
-                        data.type === 'ocean' || 
-                        (data.class === 'natural' && data.type === 'water' && !addr.country) ||
-                        (data.class === 'place' && data.type === 'sea')
-                    );
-                    
-                    // Si tiene país, asumir que está en tierra
-                    const hasCountry = Boolean(addr.country);
-                    
-                    const onLand = !isExplicitlyWater || hasCountry;
-                    
-                    sampleLandCache.set(key, onLand);
-                    resolve(onLand);
-                } catch (err) {
-                    const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
-                    if (err.name === 'AbortError') {
-                        console.debug('Timeout verificando punto, asumiendo tierra');
-                    } else {
-                        console.debug('Error verificando punto, asumiendo tierra:', err.message);
-                    }
-                    // En caso de timeout o error, asumir que SÍ está en tierra
-                    sampleLandCache.set(key, true);
-                    resolve(true);
-                }
-            });
+            // Criterio simple: latitud mayor que 43.5 es mar (Cantábrico)
+            if (lat > 43.5) {
+                return false;
+            }
+            
+            // Para el resto, aceptar todos los puntos
+            return true;
         }
 
         function generateSamplePoints(centerLat, centerLon, radiusKm, rings, perRing) {
@@ -1487,43 +1473,64 @@
 
         // Genera aproximadamente `targetCount` puntos equidistantes dentro del radio dado.
         function generateEquidistantPointsForTarget(centerLat, centerLon, radiusKm, targetCount) {
-            // Elegimos número de anillos en función de la raíz cuadrada del objetivo (distribución simple)
-            const rings = Math.max(1, Math.round(Math.sqrt(targetCount)));
-            // distribuimos puntos por anillo proporcionalmente: más puntos en anillos exteriores
             const points = [];
-            let total = 0;
-            for (let ring = 1; ring <= rings; ring++) {
-                const frac = ring / rings; // 0..1
-                // asignar número de puntos relativos al perimetro del anillo
-                const expected = Math.max(4, Math.round((2 * Math.PI * frac) * (targetCount / (2 * Math.PI * (rings/2)))));
-                const ringRadius = radiusKm * (ring / rings);
-                for (let i = 0; i < expected; i++) {
-                    const angle = (i / expected) * 2 * Math.PI;
-                    const R = 6371;
-                    const d = ringRadius / R;
-                    const lat1 = toRad(centerLat);
-                    const lon1 = toRad(centerLon);
-                    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(angle));
-                    const lon2 = lon1 + Math.atan2(Math.sin(angle) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
-                    points.push({ lat: lat2 * 180/Math.PI, lon: lon2 * 180/Math.PI });
-                    total++;
-                    if (total >= targetCount) break;
+            
+            // Calcular cuántos puntos por fila/columna necesitamos para cubrir el área
+            const pointsPerSide = Math.ceil(Math.sqrt(targetCount * 1.5)); // Factor 1.5 para compensar los puntos fuera del círculo
+            
+            // Calcular el espaciado entre puntos en km
+            const spacing = (2 * radiusKm) / pointsPerSide;
+            
+            // Generar cuadrícula centrada
+            for (let i = 0; i < pointsPerSide; i++) {
+                for (let j = 0; j < pointsPerSide; j++) {
+                    // Calcular offset desde el centro en km
+                    const offsetX = (i - pointsPerSide / 2) * spacing;
+                    const offsetY = (j - pointsPerSide / 2) * spacing;
+                    
+                    // Calcular distancia desde el centro
+                    const distanceFromCenter = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+                    
+                    // Solo incluir puntos dentro del círculo
+                    if (distanceFromCenter <= radiusKm) {
+                        // Convertir offset en km a coordenadas
+                        const angle = Math.atan2(offsetY, offsetX);
+                        const distance = distanceFromCenter;
+                        
+                        // Fórmula haversine para calcular nueva posición
+                        const R = 6371; // Radio de la Tierra en km
+                        const d = distance / R;
+                        const lat1 = toRad(centerLat);
+                        const lon1 = toRad(centerLon);
+                        
+                        const lat2 = Math.asin(
+                            Math.sin(lat1) * Math.cos(d) + 
+                            Math.cos(lat1) * Math.sin(d) * Math.cos(angle)
+                        );
+                        const lon2 = lon1 + Math.atan2(
+                            Math.sin(angle) * Math.sin(d) * Math.cos(lat1),
+                            Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
+                        );
+                        
+                        points.push({ 
+                            lat: lat2 * 180 / Math.PI, 
+                            lon: lon2 * 180 / Math.PI 
+                        });
+                    }
                 }
-                if (total >= targetCount) break;
             }
-            // Si por alguna razón quedan menos, rellenar con puntos aleatorios en el radio
-            while (points.length < targetCount) {
-                const r = Math.sqrt(Math.random()) * radiusKm; // distribuir uniformemente por área
-                const theta = Math.random() * 2 * Math.PI;
-                const R = 6371;
-                const d = r / R;
-                const lat1 = toRad(centerLat);
-                const lon1 = toRad(centerLon);
-                const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(theta));
-                const lon2 = lon1 + Math.atan2(Math.sin(theta) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
-                points.push({ lat: lat2 * 180/Math.PI, lon: lon2 * 180/Math.PI });
+            
+            // Si tenemos más puntos de los necesarios, tomar una muestra uniforme
+            if (points.length > targetCount) {
+                const step = points.length / targetCount;
+                const sampled = [];
+                for (let i = 0; i < targetCount; i++) {
+                    sampled.push(points[Math.floor(i * step)]);
+                }
+                return sampled;
             }
-            return points.slice(0, targetCount);
+            
+            return points;
         }
 
         // Pinta hasta `targetCount` puntos equidistantes dentro de CONFIG.MAX_DISTANCE desde el centro,
