@@ -855,12 +855,12 @@
                 return locationNameCache.get(key);
             }
 
-            // Delay pequeño para no saturar Nominatim
-            await new Promise(r => setTimeout(r, Math.random() * 100));
+            // Delay más largo para respetar límites de Nominatim (1 petición por segundo)
+            await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
 
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const timeoutId = setTimeout(() => controller.abort(), 8000); // Aumentar timeout a 8s
 
                 const response = await fetch(
                     `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`,
@@ -967,20 +967,16 @@
                 
                 console.log(`Puntos generados: ${allPoints.length}, En tierra (lat<=43.5): ${landPoints.length}`);
                 
-                // 4. Obtener clima y nombres para los puntos en paralelo
+                // 4. Obtener clima primero (rápido) y nombres después (lento)
                 const results = [mainLocation]; // Empezar con la ubicación principal
                 const concurrency = Number(document.getElementById('sampling-concurrency')?.value) || 8;
                 
-                const fetchTasks = landPoints.map(p => async () => {
+                // Paso 1: Obtener clima para todos los puntos (OpenWeather es más rápido)
+                const fetchWeatherTasks = landPoints.map(p => async () => {
                     try {
-                        // Obtener clima y nombre del lugar en paralelo
-                        const [weather, placeName] = await Promise.all([
-                            fetchWeatherAt(p.lat, p.lon),
-                            getLocationName(p.lat, p.lon)
-                        ]);
-                        
+                        const weather = await fetchWeatherAt(p.lat, p.lon);
                         return {
-                            name: placeName,
+                            name: `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`, // Temporal
                             lat: p.lat,
                             lon: p.lon,
                             distance: calculateDistance(coords.lat, coords.lon, p.lat, p.lon),
@@ -988,15 +984,32 @@
                             score: calculateWeatherScore(weather)
                         };
                     } catch (err) {
-                        console.warn('Error obteniendo datos para punto:', err);
+                        console.warn('Error obteniendo clima:', err);
                         return null;
                     }
                 });
 
-                const pointResults = await promisePool(fetchTasks, concurrency);
-                results.push(...pointResults.filter(r => r !== null));
-
-                // 5. Guardar y mostrar resultados
+                const weatherResults = await promisePool(fetchWeatherTasks, concurrency);
+                results.push(...weatherResults.filter(r => r !== null));
+                
+                // Mostrar resultados inmediatamente con coordenadas
+                window.allResults = results;
+                applyFiltersAndSort();
+                
+                // Paso 2: Obtener nombres en segundo plano (más lento, baja concurrencia)
+                const updateNamesTasks = results.slice(1).map(r => async () => { // Saltar mainLocation
+                    try {
+                        const placeName = await getLocationName(r.lat, r.lon);
+                        r.name = placeName;
+                    } catch (err) {
+                        // Mantener el nombre temporal
+                    }
+                });
+                
+                // Procesar nombres con baja concurrencia para no saturar Nominatim
+                await promisePool(updateNamesTasks, 2);
+                
+                // Actualizar vista con los nombres reales
                 window.allResults = results;
                 applyFiltersAndSort();
 
