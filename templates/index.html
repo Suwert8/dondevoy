@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>¿Dónde Voy? - Buscador de Buen Tiempo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>¿Dónde Voy?</h1>
+            <p>Encuentra los mejores lugares con buen tiempo cerca de ti</p>
+        </header>
+
+        <div class="search-box">
+            <input type="text" id="location" placeholder="Ingresa tu ubicación..." autocomplete="off">
+            <button onclick="searchWeather()">Buscar</button>
+        </div>
+
+        <div class="loading" id="loading" style="display: none;">
+            Buscando lugares con buen tiempo...
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="results" class="results"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
